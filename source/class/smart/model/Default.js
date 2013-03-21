@@ -142,6 +142,12 @@ qx.Class.define("smart.model.Default",
       check: "Integer",
       apply: "_applyView",
       event: "changeView"
+    },
+    keyColumnIndex:
+    {
+      nullable: true,
+      init: null,
+      check: "Integer"
     }
   },
 
@@ -191,7 +197,7 @@ qx.Class.define("smart.model.Default",
       // will be restored when the changeView event is fired (some time after
       // this method completes).
       if (preserve_selection)
-        this.__saveSelection(old);
+        this.saveSelection(old);
 
       // Select the backing store array based on the new property value.
       this.__rowArr = this.getRowArray(view);
@@ -215,7 +221,7 @@ qx.Class.define("smart.model.Default",
       // completes the work of _applyView above by restoring the selection.
     _changeView: function(e)
     {
-      this.__restoreSelection();
+      this.restoreSelection();
     },
 
     //
@@ -434,7 +440,7 @@ qx.Class.define("smart.model.Default",
       // Save indexed selection
       if (this.getView() == view)
       {
-        this.__saveSelection();
+        this.saveSelection();
       }
 
 
@@ -444,7 +450,7 @@ qx.Class.define("smart.model.Default",
       // new view
       if (this.getView() == view)
       {
-        this.__restoreSelection();
+        this.restoreSelection();
       }
 
       return view;
@@ -464,7 +470,7 @@ qx.Class.define("smart.model.Default",
       // Save indexed selection
       if (this.getView() == view)
       {
-        this.__saveSelection();
+        this.saveSelection();
       }
 
       this.__evalFilters(view);
@@ -473,7 +479,7 @@ qx.Class.define("smart.model.Default",
       // view
       if (this.getView() == view)
       {
-        this.__restoreSelection();
+        this.restoreSelection();
       }
     },
 
@@ -616,7 +622,7 @@ qx.Class.define("smart.model.Default",
 
     // Save the list of indices corresponding to the set of selected rows
     // (push).
-    __saveSelection: function(view)
+    saveSelection: function(view)
     {
       if (view === undefined)
       {
@@ -647,13 +653,13 @@ qx.Class.define("smart.model.Default",
     },
 
     //
-    // Restore the selection saved by an earlier __saveSelection call (pop).
+    // Restore the selection saved by an earlier saveSelection call (pop).
     //
     // NOTE: this is called by the changeView event handler after every view
     // change so that the indexed selection will be properly preserved across
     // view changes.
     //
-    __restoreSelection: function(view)
+    restoreSelection: function(view)
     {
       // If there's no indexed selection, there's nothing to restore.
       if (this.__selectedRows == null ||
@@ -788,13 +794,9 @@ qx.Class.define("smart.model.Default",
     },
 
     // Internal use only:
-    __setRowArray: function (view, A, preserve_selection)
+    // This function does not preserve selection or fire events.
+    __setRowArray: function (view, A)
     {
-      if (preserve_selection === undefined)
-      {
-        preserve_selection = false;
-      }
-
       var reapply = false;
 
       // If we're changing the base pointer to the current view, we need to
@@ -810,13 +812,13 @@ qx.Class.define("smart.model.Default",
       if (reapply)
       {
         //
-        // Re-select the current view. This will notify listeners with a
+        // Re-select the current view. This will NOT notify listeners with a
         // DATA_CHANGED event as well.
         //
         this._applyView(view, view,
-                        /*fireEvent:*/ true,
+                        /*fireEvent:*/ false,
                         /*force:*/ true,
-                        preserve_selection);
+                        /*preserve_selection:*/ false);
       }
     },
 
@@ -1444,12 +1446,11 @@ qx.Class.define("smart.model.Default",
     // To set multiple columns, pass columnIndex = -1 and set V to the array
     // of new values, beginning with column 0.
     //
-    __set: function(columnIndex, rowIndex, V, view)
+    __set: function(columnIndex, rowIndex, V, view, fireEvent, preserve_selection)
     {
-      if (view === undefined)
-      {
-        view = this.getView();
-      }
+      if (view === undefined)                view = this.getView();
+      if (fireEvent === undefined)           fireEvent = true;
+      if (preserve_selection === undefined)  preserve_selection = true;
 
       var columns = this.getColumnCount();
       var R = this.getRowReference(rowIndex, view);	
@@ -1464,7 +1465,8 @@ qx.Class.define("smart.model.Default",
 
       // Save the indexed selection in case this change causes a selected row
       // to move or disappear.
-      this.__saveSelection();
+      if (preserve_selection)
+        this.saveSelection();
 
       // If the value changed is in the sort column, then we may need to move
       // this row to maintain the sort. The easiest way to do this is to
@@ -1501,6 +1503,14 @@ qx.Class.define("smart.model.Default",
       }
       else
       {
+        var sort_col = this.getSortColumnIndex();
+        // If any set value is in the sort column, we have to reinsert this
+        // row to maintain the sort.
+        if (this.isSorted() && (V[sort_col] != R[sort_col]))
+        {
+          reinsert = true;
+        }
+
         // We're setting multiple values
         //
         // We copy values rather than overwriting the row reference.  This
@@ -1508,6 +1518,10 @@ qx.Class.define("smart.model.Default",
         //
         for (var col = 0; col < V.length && col < columns; col++)
         {
+          if (R[col] == V[col])
+              continue;
+
+
           // If we're setting a value in a column that's used as the key for a
           // user index, we have to update the index for all views since the
           // key for this row is changing.
@@ -1520,21 +1534,18 @@ qx.Class.define("smart.model.Default",
           
           R[col] = V[col];
         }
-
-        // If any set value is in the sort column, we have to reinsert this
-        // row to maintain the sort.
-        if (this.isSorted() && V.length >= this.getSortColumnIndex())
-        {
-          reinsert = true;
-        }
       }
 
       // Now apply any changes necessary to keep all the views sorted and
       // filtered across this value change.
-      this.__propagateRowChangeToAllViews(R, reinsert);
+      this.__propagateRowChangeToAllViews(R, 
+                                          /* resort */ reinsert,
+                                          /* skipviewzero */ false,
+                                          fireEvent);
 
       // Restore the indexed selction.
-      this.__restoreSelection();
+      if (preserve_selection)
+        this.restoreSelection();
     },
 
     // This internal-use routine re-evaluates the filtering and sorting of a
@@ -1597,7 +1608,7 @@ qx.Class.define("smart.model.Default",
           // re-insert the row if it belongs there now
           if (!now_filtered)
           {
-            this.__insertRows(v, [ R ], /*runFilters:*/ false);
+            this.__insertRows(v, [ R ], /*runFilters:*/ false, /* alreadySorted */ true);
           }
         }
         else
@@ -1613,7 +1624,7 @@ qx.Class.define("smart.model.Default",
             {
               // row wasn't there before; now should be: insert.
               // Insert the row into this view
-              this.__insertRows(v, [ R ], /*runFilters:*/ false);
+              this.__insertRows(v, [ R ], /*runFilters:*/ false, /* alreadySorted */ true);
             }
           }
         }
@@ -1661,9 +1672,10 @@ qx.Class.define("smart.model.Default",
      *
      * @see #setValueById, #setRow
      */
-    setValue: function(columnIndex, rowIndex, value, view)
+    setValue: function(columnIndex, rowIndex, value, view, fireEvent,
+                      preserve_selection)
     {
-      this.__set(columnIndex, rowIndex, value, view);
+      this.__set(columnIndex, rowIndex, value, view, fireEvent, preserve_selection);
     },
 
     /**
@@ -1714,9 +1726,10 @@ qx.Class.define("smart.model.Default",
      *
      * @see #setValue
      */
-    setRow: function(rowIndex, rowData, view)
+    setRow: function(rowIndex, rowData, view, fireEvent, preserve_selection)
     {
-      this.__set(/*columnIndex*/ -1, rowIndex, rowData, view);
+      this.__set(/*columnIndex*/ -1, rowIndex, rowData, view, fireEvent,
+                 preserve_selection);
     },
 
     /**
@@ -1876,7 +1889,7 @@ qx.Class.define("smart.model.Default",
       }
 
       // Save the indexed selection
-      this.__saveSelection();
+      this.saveSelection();
 
       var start = (new Date()).getTime();
 
@@ -1909,7 +1922,7 @@ qx.Class.define("smart.model.Default",
       }
 
       // Restore the indexed selection
-      this.__restoreSelection();
+      this.restoreSelection();
 
       if (fireEvent)
       {
@@ -2021,7 +2034,7 @@ qx.Class.define("smart.model.Default",
       // TBD: __removeRows will recalculate the association maps for each
       // view. Is it correct to just do this once, rather than each time? This
       // seems inefficient...
-      this.__saveSelection();
+      this.saveSelection();
 
       for (var v = 0; v < this.__views.length; v++)
       {
@@ -2057,7 +2070,7 @@ qx.Class.define("smart.model.Default",
         }
       }
       
-      this.__restoreSelection();
+      this.restoreSelection();
 
       if (fireEvent)
       {
@@ -2109,7 +2122,8 @@ qx.Class.define("smart.model.Default",
      */
     getRowId : function(row)
     {
-      return row.__id;
+      var keypos = this.getKeyColumnIndex();
+      return (keypos == null) ? row.__id : row[keypos];
     },
 
 
@@ -2151,11 +2165,15 @@ qx.Class.define("smart.model.Default",
     // new array containing references to the rows that the filters allow. We
     // share the reference to the row data. This means there's really a single
     // copy of the rowdata, but it may be shared by multiple views.
-    __testAllFilters: function(view, R, single)
+    __testAllFilters: function(view, R, single, clone)
     {
       if (single === undefined)
       {
         single = true;
+      }
+      if (clone === undefined)
+      {
+        clone = true;
       }
 
       var filter = this.__getFilter(view);
@@ -2163,15 +2181,10 @@ qx.Class.define("smart.model.Default",
       // No filter at all means everything's allowed.
       if (!filter)
       {
-        return single ? true : qx.lang.Array.clone(R);
+        return single ? true : (clone ? qx.lang.Array.clone(R) : R);
       }
 
       // Handle the single filter, single row case quickly.
-      if (single)
-      {
-        return filter(R);
-      }
-
       //
       // Actually evaluate the filters
       //
@@ -2250,6 +2263,8 @@ qx.Class.define("smart.model.Default",
     // we push rows onto the view backing store arrays in the order they
     // appear in view zero, the alternate views will also be sorted if view
     // zero is sorted.
+    //
+    // TODO: is it called?
     __evalAllFilters: function(fireEvent, updateAssociationMaps)
     {
       for (var v = 1; v < this.__views.length; v++)
@@ -2275,9 +2290,13 @@ qx.Class.define("smart.model.Default",
      */
     assignRowIDs: function(A)
     {
-      for (var i = 0; i < A.length; i++)
+      var keypos = this.getKeyColumnIndex();
+      if (keypos == null)
       {
-        A[i].__id = this.__ID++;
+        for (var i = 0; i < A.length; i++)
+        {
+          A[i].__id = this.__ID++;
+        }
       }
     },
 
@@ -2321,7 +2340,7 @@ qx.Class.define("smart.model.Default",
           var R = A[j];
           if (index === undefined)
           {
-            this.__views[v].associations[R.__id] = j;
+            this.__views[v].associations[this.getRowId(R)] = j;
           }
 
           // Update user-defined indices as well
@@ -2354,7 +2373,7 @@ qx.Class.define("smart.model.Default",
       for (var i = 0; i < pushed_rows.length; i++, value++)
       {
         var R = pushed_rows[i];
-        assoc[R.__id] = value;
+        assoc[this.getRowId(R)] = value;
 
         // Update user-defined indices as well
         for (var column in this.__indices)
@@ -2395,23 +2414,7 @@ qx.Class.define("smart.model.Default",
      */
     __getRowIndex: function(view, R)
     {
-      try
-      {
-        if (R.__id === undefined)
-        {
-          // This row was never added to the model!
-          //this.__debug("__getRowIndex: attempt to find a row with no ID");	
-          //this.__debugobj(R, "rowdata");
-          return undefined;
-        }
-      }
-      catch (e)
-      {
-        this.__debug(e);
-        return undefined;
-      }
-
-      return this.__getAssoc(view)[R.__id];
+      return this.__getAssoc(view)[this.getRowId(R)];
     },
 
     //
@@ -2496,7 +2499,7 @@ qx.Class.define("smart.model.Default",
       }
 
       // Save indexed selection
-      this.__saveSelection();
+      this.saveSelection();
 
       // If only the ascending boolean is changing, then we can do O(n) work
       // instead of O(n lg n) work just by reversing the array.
@@ -2540,7 +2543,7 @@ qx.Class.define("smart.model.Default",
 
       // Restore indexed selection -- select the corresponding rows in the new
       // view
-      this.__restoreSelection();
+      this.restoreSelection();
 
       // Notify listeners
       this.fireEvent('metaDataChanged');
