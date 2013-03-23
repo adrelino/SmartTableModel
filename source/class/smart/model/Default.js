@@ -620,9 +620,14 @@ qx.Class.define("smart.model.Default",
       this.__suppress_indexed_selection = suspend;
     },
 
+    saveSelection: function(view)
+    {
+      this.__selectedRows = this.getSelection();
+    },
+
     // Save the list of indices corresponding to the set of selected rows
     // (push).
-    saveSelection: function(view)
+    getSelection: function(view)
     {
       if (view === undefined)
       {
@@ -637,7 +642,7 @@ qx.Class.define("smart.model.Default",
       }
 
       // Initialize the array containing the selected rows.
-      this.__selectedRows = [];
+      var selected = [];
 
       // Iterate through the selected rows. For each selected row...
       this.__selectionModel.iterateSelection(
@@ -645,11 +650,10 @@ qx.Class.define("smart.model.Default",
         {
           // Get the value from the indexed column, and push it to the
           // selected rows array.
-          this.__selectedRows.push(this.getValue(this.__selectionIndex,
-                                                 row,
-                                                 view));
+          selected.push(this.getValue(this.__selectionIndex, row, view));
         },
         this);
+      return selected;
     },
 
     //
@@ -661,9 +665,15 @@ qx.Class.define("smart.model.Default",
     //
     restoreSelection: function(view)
     {
+      if (this.__selectedRows == null)
+          return;
+      this.setSelection(view, this.__selectedRows);
+    },
+
+    setSelection: function(view, selected)
+    {
       // If there's no indexed selection, there's nothing to restore.
-      if (this.__selectedRows == null ||
-          ! this.__selectionModel ||
+      if (! this.__selectionModel ||
           this.__selectionIndex < 0 ||
           this.__selectionIndex >= this.getColumnCount())
       {
@@ -681,9 +691,6 @@ qx.Class.define("smart.model.Default",
       {
         // ... then clear the current selection
         this.__clearSelection();
-      
-        // Get a local reference to the list of selected rows
-        var selected = this.__selectedRows;
 
         // For each selected row...
         for (var i = 0; i < selected.length; i++)
@@ -1471,7 +1478,7 @@ qx.Class.define("smart.model.Default",
       // If the value changed is in the sort column, then we may need to move
       // this row to maintain the sort. The easiest way to do this is to
       // remove the row from all views, then reinsert it where it belongs.
-      var reinsert = false;
+      var reinsert = false, changed = false;
 
       // See if we're setting a single value vs. an entire row
       if (columnIndex >= 0 && columnIndex < columns)
@@ -1494,6 +1501,7 @@ qx.Class.define("smart.model.Default",
                                      /*newkey:*/ V);
           }
           R[columnIndex] = V;
+          changed = true;
         }
 
         // If this value is in the sort column, we have to remove this row
@@ -1533,19 +1541,25 @@ qx.Class.define("smart.model.Default",
           }
           
           R[col] = V[col];
+          changed = true;
         }
       }
 
-      // Now apply any changes necessary to keep all the views sorted and
-      // filtered across this value change.
-      this.__propagateRowChangeToAllViews(R, 
-                                          /* resort */ reinsert,
-                                          /* skipviewzero */ false,
-                                          fireEvent);
-
-      // Restore the indexed selction.
-      if (preserve_selection)
-        this.restoreSelection();
+      if (changed)
+      {
+        this.updateRowVersion(R);
+       
+        // Now apply any changes necessary to keep all the views sorted and
+        // filtered across this value change.
+        this.__propagateRowChangeToAllViews(R, 
+                                            /* resort */ reinsert,
+                                            /* skipviewzero */ false,
+                                            fireEvent);
+       
+        // Restore the indexed selction.
+        if (preserve_selection)
+          this.restoreSelection();
+      }
     },
 
     // This internal-use routine re-evaluates the filtering and sorting of a
@@ -2126,6 +2140,17 @@ qx.Class.define("smart.model.Default",
       return (keypos == null) ? row.__id : row[keypos];
     },
 
+    getRowVersion : function(row)
+    {
+      return row.__ver;
+    },
+
+    updateRowVersion : function(row)
+    {
+      row.__ver++;
+      return row;
+    },
+
 
     /**
      * Get a row given its unique identifier
@@ -2290,6 +2315,11 @@ qx.Class.define("smart.model.Default",
      */
     assignRowIDs: function(A)
     {
+      for (var i = 0; i < A.length; i++)
+      {
+        A[i].__ver = 0;
+      }
+
       var keypos = this.getKeyColumnIndex();
       if (keypos == null)
       {
