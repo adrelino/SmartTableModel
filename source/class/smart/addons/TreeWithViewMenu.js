@@ -69,7 +69,7 @@ qx.Class.define("smart.addons.TreeWithViewMenu",
       {
         var menu = menuButton.getMenu();
         menu.setOpener(widget);
-        menu.openAtMouse(clickEvent);
+        menu.openAtPointer(clickEvent);
       }
     },
 
